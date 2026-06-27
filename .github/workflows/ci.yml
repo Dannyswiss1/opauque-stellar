@@ -74,6 +74,24 @@ jobs:
       - name: cargo test --workspace
         run: cargo test --workspace --locked
 
+  payment-link-tests:
+    name: Payment Link Validation Tests (SEP-7)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Run opaque:// payment-link tests
+        run: npx --prefix frontend vitest run src/__tests__/paymentLink.test.ts
+
   circuit-constraints:
     name: Circuit Constraint Regression Gate
     runs-on: ubuntu-latest
@@ -95,9 +113,9 @@ jobs:
   ci-success-gate:
     name: CI Success Gate
     runs-on: ubuntu-latest
-    needs: [gitleaks, npm-supply-chain-audit, contracts-test, circuit-constraints]
+    needs: [gitleaks, npm-supply-chain-audit, contracts-test, circuit-constraints, payment-link-tests]
     if: always()
     steps:
       - name: Check all jobs passed
-        if: needs.gitleaks.result != 'success' || needs.npm-supply-chain-audit.result != 'success' || needs.contracts-test.result != 'success' || needs.circuit-constraints.result != 'success'
+        if: needs.gitleaks.result != 'success' || needs.npm-supply-chain-audit.result != 'success' || needs.contracts-test.result != 'success' || needs.circuit-constraints.result != 'success' || needs.payment-link-tests.result != 'success'
         run: exit 1
