@@ -27,7 +27,12 @@ export const NetworkMismatchModal: React.FC = () => {
   if (!mismatch) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[110]">
+    <div
+      role="alertdialog"
+      data-critical-modal
+      data-security-warning
+      className="fixed inset-0 bg-black/80 flex items-center justify-center z-[110]"
+    >
       <div className="bg-white text-gray-900 rounded-lg p-6 max-w-md w-full shadow-2xl text-center">
         <div className="text-4xl mb-4">🚫</div>
         <h2 className="text-2xl font-bold mb-4">Network Mismatch Detected</h2>
