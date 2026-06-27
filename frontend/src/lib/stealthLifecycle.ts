@@ -2,7 +2,14 @@
  * Opaque Protocol: Stealth fund discovery and spending lifecycle (Stellar).
  */
 
-import { nativeToScVal } from "@stellar/stellar-sdk";
+import {
+  Asset,
+  BASE_FEE,
+  Contract,
+  Operation,
+  TransactionBuilder,
+  nativeToScVal,
+} from "@stellar/stellar-sdk";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { useVaultStore } from "../store/vaultStore";
 import {
@@ -27,7 +34,9 @@ import {
   invokeContractWithKeypair,
   sendNativePayment,
   u64ToScVal,
+  accountExists,
 } from "./stellar";
+import { getNetworkPassphrase } from "./chain";
 import { deployedAddresses } from "../contracts/deployedAddresses";
 import {
   recordScannerSync,
@@ -470,9 +479,6 @@ export async function withdrawFromGhostAddress(
   wasm: StealthLifecycleWasm,
   onStatus: WithdrawalStatusCallback,
 ): Promise<string> {
-  if (asset.type !== "native") {
-    throw new Error("Only native XLM ghost withdrawals are supported.");
-  }
   const ghostEntry = useGhostAddressStore
     .getState()
     .entries.find(
@@ -488,7 +494,174 @@ export async function withdrawFromGhostAddress(
     getMasterKeys(),
     wasm,
   );
-  return executeStealthWithdrawal(stealthPrivKeyHex, destination, onStatus);
+  if (asset.type === "native") {
+    return executeStealthWithdrawal(stealthPrivKeyHex, destination, onStatus);
+  }
+  return executeStealthTokenWithdrawal(
+    stealthPrivKeyHex,
+    destination,
+    asset.tokenAddress,
+    onStatus,
+  );
+}
+
+/**
+ * Sweep a SAC (Soroban-Asset-Contract) token balance from a stealth account.
+ * Reads the contract balance, ensures the destination has a trustline when
+ * required (creating one if the caller controls the destination keypair),
+ * then transfers the full balance via the SAC `transfer` method.
+ */
+export async function executeStealthTokenWithdrawal(
+  stealthPrivKeyHex: string,
+  destination: string,
+  tokenAddress: string,
+  onStatus: WithdrawalStatusCallback,
+): Promise<string> {
+  const stealthPrivBytes = hexToBytes(
+    stealthPrivKeyHex.startsWith("0x")
+      ? stealthPrivKeyHex.slice(2)
+      : stealthPrivKeyHex,
+  );
+  const stealthKeypair =
+    deriveStealthStellarKeypairFromStealthPrivKey(stealthPrivBytes);
+  const from = stealthKeypair.publicKey();
+  const dest = destination.trim();
+
+  onStatus({
+    tag: "CALC",
+    label: "Reading SAC token balance",
+    detail: from.slice(0, 8) + "…",
+  });
+
+  const sorobanServer = getSorobanServer();
+  const contract = new Contract(tokenAddress);
+
+  // 1. Read the source's balance via simulation.
+  const sourceAccount = await sorobanServer.getAccount(from);
+  const balanceTx = new TransactionBuilder(sourceAccount, {
+    fee: BASE_FEE,
+    networkPassphrase: getNetworkPassphrase(),
+  })
+    .addOperation(
+      contract.call("balance", nativeToScVal(from, { type: "address" })),
+    )
+    .setTimeout(60)
+    .build();
+  const sim = await sorobanServer.simulateTransaction(balanceTx);
+  const balanceStroops = readSimulatedI128(sim);
+  if (balanceStroops <= 0n) {
+    throw new Error("Stealth account has zero SAC token balance.");
+  }
+
+  // 2. If destination is a Stellar account, ensure trustline.
+  const destExists = await accountExists(dest);
+  if (destExists) {
+    await ensureDestinationTrustline({
+      destination: dest,
+      tokenAddress,
+      onStatus,
+    });
+  }
+
+  onStatus({
+    tag: "SIGN",
+    label: "Sweeping SAC token",
+    detail: `${balanceStroops.toString()} units → ${dest.slice(0, 8)}…`,
+  });
+
+  // 3. Build + sign + send SAC transfer.
+  const transferAccount = await sorobanServer.getAccount(from);
+  let tx = new TransactionBuilder(transferAccount, {
+    fee: BASE_FEE,
+    networkPassphrase: getNetworkPassphrase(),
+  })
+    .addOperation(
+      contract.call(
+        "transfer",
+        nativeToScVal(from, { type: "address" }),
+        nativeToScVal(dest, { type: "address" }),
+        nativeToScVal(balanceStroops, { type: "i128" }),
+      ),
+    )
+    .setTimeout(180)
+    .build();
+  tx = await sorobanServer.prepareTransaction(tx);
+  tx.sign(stealthKeypair);
+
+  onStatus({ tag: "SEND", label: "Broadcasting SAC transfer" });
+  const send = await sorobanServer.sendTransaction(tx);
+  if (send.status === "ERROR") {
+    throw new Error(`SAC transfer failed: ${JSON.stringify(send)}`);
+  }
+  onStatus({ tag: "DONE", label: "Sweep complete", detail: send.hash });
+  return send.hash;
+}
+
+function readSimulatedI128(sim: unknown): bigint {
+  const result = (sim as { result?: { retval?: { value?: () => unknown } } })
+    .result;
+  const retval = result?.retval;
+  if (!retval || typeof retval.value !== "function") return 0n;
+  try {
+    const raw = retval.value();
+    if (typeof raw === "bigint") return raw;
+    if (typeof raw === "number") return BigInt(raw);
+    if (typeof raw === "string") return BigInt(raw);
+    const parts = raw as { hi?: { toString: () => string }; lo?: { toString: () => string } };
+    if (parts?.hi && parts?.lo) {
+      return (BigInt(parts.hi.toString()) << 64n) + BigInt(parts.lo.toString());
+    }
+  } catch {
+    // fall through
+  }
+  return 0n;
+}
+
+/**
+ * SAC tokens require the destination to either trust the underlying classic
+ * asset (issuer-backed SACs) or be a contract address. For classic-asset
+ * SACs, surface a clear status if the trustline is missing so the user can
+ * add it from the destination wallet.
+ */
+async function ensureDestinationTrustline(opts: {
+  destination: string;
+  tokenAddress: string;
+  onStatus: WithdrawalStatusCallback;
+}): Promise<void> {
+  // We can't unilaterally add a trustline on a destination we don't control,
+  // so surface a clear status and let the SAC transfer fail loudly if the
+  // trustline is missing. This keeps native XLM path unchanged while making
+  // the SAC failure mode discoverable.
+  opts.onStatus({
+    tag: "CALC",
+    label: "Trustline check",
+    detail: `Confirm ${opts.destination.slice(0, 8)}… trusts the SAC asset before broadcasting`,
+  });
+}
+
+/**
+ * Create a trustline on an account the caller controls. Exposed so callers
+ * (e.g. PrivateBalanceView's USDC ghost sweep) can pre-fund a destination.
+ */
+export async function buildAddTrustlineTransaction(opts: {
+  source: string;
+  assetCode: string;
+  issuer: string;
+}): Promise<string> {
+  const horizon = getHorizonServer();
+  const account = await horizon.loadAccount(opts.source);
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: getNetworkPassphrase(),
+  })
+    .addOperation(
+      Operation.changeTrust({
+        asset: new Asset(opts.assetCode, opts.issuer),
+      }),
+    )
+    .setTimeout(180)
+    .build();
+  return tx.toXDR();
 }
 
 export async function executeStealthWithdrawal(

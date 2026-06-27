@@ -25,6 +25,8 @@ import { SecuritySettings } from "./pages/settings/SecuritySettings";
 import { FeatureDisabledNotice } from "./components/FeatureDisabledNotice";
 import { getTabAccess } from "./lib/tabAccess";
 import { getFeatureFlags } from "./lib/featureFlags";
+import { useKeyboardShortcuts, type ShortcutTarget } from "./lib/a11y/keyboardShortcuts";
+import { KeyboardHelpModal } from "./components/KeyboardHelpModal";
 
 const SchemaStudio = lazy(() => import("./components/SchemaStudio").then((m) => ({ default: m.SchemaStudio })));
 const AttestationManager = lazy(() => import("./components/AttestationManager").then((m) => ({ default: m.AttestationManager })));
@@ -42,6 +44,7 @@ function LazyFallback() {
 function AppContent() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [registrationJustCompleted, setRegistrationJustCompleted] = useState(false);
+  const [kbdHelpOpen, setKbdHelpOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   useKeys();
@@ -78,6 +81,16 @@ function AppContent() {
   const handleTab = (t: Tab) => {
     setTab(t);
   };
+
+  const handleShortcutNavigate = useCallback((target: ShortcutTarget) => {
+    setTab(target as Tab);
+  }, []);
+
+  useKeyboardShortcuts({
+    enabled: isSetup && isConnected,
+    onNavigate: handleShortcutNavigate,
+    onOpenHelp: () => setKbdHelpOpen(true),
+  });
 
   useEffect(() => {
     if (tab !== "dashboard" || !isConnected || !isSetup || hasCompletedOnboardingTour()) return;
@@ -158,10 +171,15 @@ function AppContent() {
 
   const protocolLogPanel = getFeatureFlags().debugLogs ? <ProtocolLogPanel /> : null;
 
+  const helpModal = (
+    <KeyboardHelpModal open={kbdHelpOpen} onClose={() => setKbdHelpOpen(false)} />
+  );
+
   if (!isSetup) {
     return (
       <div className="min-h-dvh flex flex-col bg-ink-950 bg-grid-fade bg-size-grid">
         <LandingView />
+        {helpModal}
       </div>
     );
   }
@@ -215,6 +233,7 @@ function AppContent() {
       protocolLog={protocolLogPanel}
     >
       <NetworkGuard>{renderView()}</NetworkGuard>
+      {helpModal}
     </Layout>
   );
 }
@@ -308,15 +327,26 @@ function SwUpdateBanner() {
   );
 }
 
+function AppShell() {
+  return (
+    <>
+      <SwUpdateBanner />
+      <NetworkMismatchModal />
+      <AppContent />
+      <ToastLayer />
+    </>
+  );
+}
+
 export default function App() {
   return (
     <KeysProvider>
       <ProtocolLogProvider>
         <ToastProvider>
-          <SwUpdateBanner />
-          <NetworkMismatchModal />
-          <AppContent />
-          <ToastLayer />
+          <a href="#main-content" className="skip-to-content">
+            Skip to main content
+          </a>
+          <AppShell />
         </ToastProvider>
       </ProtocolLogProvider>
     </KeysProvider>

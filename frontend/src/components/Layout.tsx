@@ -106,7 +106,8 @@ function DesktopNav({
               type="button"
               onClick={onConnect}
               disabled={isConnecting}
-              className="rounded-lg bg-white border border-white px-4 py-1.5 text-sm font-semibold text-black transition-all hover:bg-black hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+              data-tour="connect"
+              className="rounded-lg bg-white border border-white px-4 py-1.5 text-sm font-semibold text-black transition-all hover:bg-black hover:text-white disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-white focus-visible:outline-offset-2"
             >
               {isConnecting ? "Connecting…" : "Connect"}
             </button>
@@ -176,7 +177,10 @@ const mobileTabs: { id: Tab; label: string; icon: string }[] = [
 
 function MobileNav({ tab, onTabChange }: Pick<LayoutProps, "tab" | "onTabChange">) {
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-20 border-t border-ink-700/60 bg-ink-950/80 backdrop-blur-lg pb-[env(safe-area-inset-bottom)]">
+    <nav
+      aria-label="Primary"
+      className="md:hidden fixed bottom-0 left-0 right-0 z-20 border-t border-ink-700/60 bg-ink-950/80 backdrop-blur-lg pb-[env(safe-area-inset-bottom)]"
+    >
       <div className="flex items-center justify-around py-2 px-2">
         {mobileTabs.map(({ id, label, icon }) => {
           const active = tab === id;
@@ -185,7 +189,9 @@ function MobileNav({ tab, onTabChange }: Pick<LayoutProps, "tab" | "onTabChange"
               key={id}
               type="button"
               onClick={() => onTabChange(id)}
-              className={`flex flex-col items-center gap-0.5 rounded-lg px-4 py-2 min-w-[72px] transition-colors ${
+              aria-current={active ? "page" : undefined}
+              aria-label={`Go to ${label}`}
+              className={`flex flex-col items-center gap-0.5 rounded-lg px-4 py-2 min-w-[72px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-white ${
                 active ? "text-white" : "text-mist/60 hover:text-white"
               }`}
             >
@@ -238,7 +244,9 @@ export function Layout({
       {/* ── Content ── */}
       <div className="flex-1 min-h-0 overflow-y-auto pt-8 md:pt-24 pb-24 md:pb-16">
         <main
-          className="mx-auto flex w-full max-w-3xl flex-1 min-h-0 flex-col px-5 sm:px-8 pt-6 pb-8"
+          id="main-content"
+          tabIndex={-1}
+          className="mx-auto flex w-full max-w-3xl flex-1 min-h-0 flex-col px-5 sm:px-8 pt-6 pb-8 focus:outline-none"
         >
           <AnimatePresence mode="wait">
             <motion.div

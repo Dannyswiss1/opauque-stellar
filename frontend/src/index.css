@@ -71,6 +71,31 @@
   summary {
     cursor: pointer;
   }
+
+  /* Accessibility: visible focus ring for keyboard users only. */
+  :focus-visible {
+    outline: 2px solid #ffffff;
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* Skip-to-content link — visible only when focused via keyboard. */
+  .skip-to-content {
+    position: fixed;
+    top: -100px;
+    left: 1rem;
+    z-index: 9999;
+    background: #ffffff;
+    color: #000000;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-weight: 600;
+    transition: top 0.15s ease;
+  }
+  .skip-to-content:focus,
+  .skip-to-content:focus-visible {
+    top: 1rem;
+  }
 }
 
 @layer utilities {
