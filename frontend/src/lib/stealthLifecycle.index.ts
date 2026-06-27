@@ -10,6 +10,8 @@ export {
   executeGhostOnchainAnnouncement,
   withdrawFromGhostAddress,
   executeStealthWithdrawal,
+  executeStealthTokenWithdrawal,
+  buildAddTrustlineTransaction,
   formatXlm,
   type StealthLifecycleWasm,
   type ScanStatus,
